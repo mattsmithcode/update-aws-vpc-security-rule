@@ -1,7 +1,60 @@
-import { Credentials } from './auth/credentials';
-import { Ec2 } from './aws/ec2';
+import { SecurityGroupRule } from '@aws-sdk/client-ec2';
 import process from 'process';
 import prompts from 'prompts';
+import readline from 'readline';
+import { Credentials } from './auth/credentials';
+import { Ec2 } from './aws/ec2';
+
+const exitOnAbort = (state: { aborted: boolean }) => {
+    if (state.aborted)
+    {
+        console.log();
+        process.exit();
+    }
+};
+
+async function promptForSecurityRule(securityRules: SecurityGroupRule[]): Promise<string>
+{
+    while (true)
+    {
+        const results = await prompts([
+            {
+                type: 'select',
+                name: 'rule',
+                message: 'Select security rule',
+                choices: securityRules
+                    .sort((a, b) => {
+                        return (a.Description ?? a.SecurityGroupRuleId ?? '')
+                            .localeCompare(
+                                b.Description ?? b.SecurityGroupRuleId ?? ''
+                            )
+                    })
+                    .map(rule => ({
+                        title: rule.Description ?? rule.SecurityGroupRuleId as string,
+                        value: {
+                            ruleId: rule.SecurityGroupRuleId as string,
+                            ruleDescription: rule.Description as string
+                        }
+                    })),
+                onState: exitOnAbort
+            },
+            {
+                type: 'toggle',
+                name: 'confirm',
+                message: prev => `This will update the IP address for ${prev.ruleDescription}. Are you sure?`,
+                active: 'Yes',
+                inactive: 'No',
+                onState: exitOnAbort
+            }
+        ]);
+
+        if (results.confirm)
+            return results.rule.ruleId;
+
+        readline.moveCursor(process.stdout, 0, -2);
+        readline.clearScreenDown(process.stdout);
+    }
+}
 
 async function start()
 {
@@ -20,8 +73,32 @@ async function start()
         type: 'text',
         name: 'value',
         message: 'Enter AWS region',
-        validate: value => /^([a-z]+-)+[0-9]+$/.test(value) ? true : 'Invalid region format'
+        validate: value => /^([a-z]+-)+[0-9]+$/.test(value) ? true : 'Invalid region format',
+        onState: exitOnAbort
     });
+    const client = new Ec2(region.value);
+
+    const securityGroups = await client.getSecurityGroups();
+    const securityGroup = await prompts({
+        type: 'select',
+        name: 'value',
+        message: 'Select security group',
+        choices: securityGroups
+            .sort((a, b) => {
+                return (a.GroupName ?? '')
+                    .localeCompare(b.GroupName ?? '');
+            })
+            .map(group => ({
+            title: group.GroupName as string,
+            value: group.GroupId as string
+        })),
+        onState: exitOnAbort
+    });
+
+    const securityRules = await client.getSecurityRules(securityGroup.value);
+    const securityRuleId = await promptForSecurityRule(
+        securityRules.filter(rule => !rule.IsEgress)
+    );
 }
 
 start();
