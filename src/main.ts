@@ -1,4 +1,5 @@
 import { SecurityGroupRule } from '@aws-sdk/client-ec2';
+import fetch from 'node-fetch';
 import process from 'process';
 import prompts from 'prompts';
 import readline from 'readline';
@@ -13,7 +14,22 @@ const exitOnAbort = (state: { aborted: boolean }) => {
     }
 };
 
-async function promptForSecurityRule(securityRules: SecurityGroupRule[]): Promise<string>
+async function getPublicIpAddress(): Promise<string>
+{
+    try
+    {
+        const response = await fetch('https://v4.ident.me');
+
+        return await response.text();
+    }
+    catch (error)
+    {
+        console.error('Could not determine public IP address');
+        process.exit(1);
+    }
+}
+
+async function promptForSecurityRule(securityRules: SecurityGroupRule[], ipAddress: string): Promise<SecurityGroupRule>
 {
     while (true)
     {
@@ -31,17 +47,14 @@ async function promptForSecurityRule(securityRules: SecurityGroupRule[]): Promis
                     })
                     .map(rule => ({
                         title: rule.Description ?? rule.SecurityGroupRuleId as string,
-                        value: {
-                            ruleId: rule.SecurityGroupRuleId as string,
-                            ruleDescription: rule.Description as string
-                        }
+                        value: rule
                     })),
                 onState: exitOnAbort
             },
             {
                 type: 'toggle',
                 name: 'confirm',
-                message: prev => `This will update the IP address for ${prev.ruleDescription}. Are you sure?`,
+                message: prev => `This will update the IP address for ${prev.Description} to ${ipAddress}. Are you sure?`,
                 active: 'Yes',
                 inactive: 'No',
                 onState: exitOnAbort
@@ -49,7 +62,7 @@ async function promptForSecurityRule(securityRules: SecurityGroupRule[]): Promis
         ]);
 
         if (results.confirm)
-            return results.rule.ruleId;
+            return results.rule;
 
         readline.moveCursor(process.stdout, 0, -2);
         readline.clearScreenDown(process.stdout);
@@ -58,6 +71,7 @@ async function promptForSecurityRule(securityRules: SecurityGroupRule[]): Promis
 
 async function start()
 {
+    const ipAddress = await getPublicIpAddress();
     const credentials = new Credentials();
 
     while (!credentials.valid())
@@ -96,8 +110,21 @@ async function start()
     });
 
     const securityRules = await client.getSecurityRules(securityGroup.value);
-    const securityRuleId = await promptForSecurityRule(
-        securityRules.filter(rule => !rule.IsEgress)
+    const securityRule = await promptForSecurityRule(
+        securityRules.filter(rule => !rule.IsEgress),
+        ipAddress
+    );
+
+    const updated = await client.setSecurityRuleIpAddress(
+        securityGroup.value,
+        securityRule,
+        ipAddress
+    );
+
+    console.log(
+        updated ?
+            '\nSecurity rule updated' :
+            '\nSecurity rule update failed'
     );
 }
 

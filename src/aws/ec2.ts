@@ -2,6 +2,7 @@ import {
     DescribeSecurityGroupRulesCommand,
     DescribeSecurityGroupsCommand,
     EC2Client,
+    ModifySecurityGroupRulesCommand,
     SecurityGroup,
     SecurityGroupRule
 } from '@aws-sdk/client-ec2';
@@ -38,6 +39,27 @@ class Ec2
         );
 
         return commandOutput.SecurityGroupRules ?? []
+    }
+
+    public async setSecurityRuleIpAddress(groupId: string, rule: SecurityGroupRule, ipAddress: string): Promise<boolean>
+    {
+        const commandOutput = await this.client.send(
+            new ModifySecurityGroupRulesCommand({
+                GroupId: groupId,
+                SecurityGroupRules: [{
+                    SecurityGroupRuleId: rule.SecurityGroupRuleId,
+                    SecurityGroupRule: {
+                        CidrIpv4: `${ipAddress}/32`,
+                        Description: rule.Description,
+                        FromPort: rule.FromPort,
+                        IpProtocol: rule.IpProtocol,
+                        ToPort: rule.ToPort
+                    }
+                }]
+            })
+        );
+
+        return commandOutput.Return ?? false;
     }
 }
 
